@@ -72,8 +72,8 @@ class TestEntityLinker:
             )
         )
 
-        # 注册别名
-        assert linker.register_alias("xiaoyan", "萧炎")
+        # canonical_name 会在实体写入时自动注册为别名
+        assert linker.lookup_alias("萧炎") == "xiaoyan"
         assert linker.register_alias("xiaoyan", "小炎子")
 
         # 查找
@@ -107,9 +107,7 @@ class TestEntityLinker:
             )
         )
 
-        linker.register_alias("xiaoyan", "萧炎", "角色")
-        # v5.0: 同一别名可绑定不同实体（一对多）
-        assert linker.register_alias("other_person", "萧炎", "角色")
+        # canonical_name 会自动作为别名；同一别名可绑定不同实体（一对多）
 
         # 查找所有匹配
         entries = linker.lookup_alias_all("萧炎")
@@ -454,6 +452,25 @@ class TestIndexManager:
         assert stats["chapters"] == 1
         assert stats["scenes"] == 1
         assert stats["entities"] == 1
+
+    def test_entity_canonical_name_alias_fallback(self, temp_project):
+        manager = IndexManager(temp_project)
+
+        manager.upsert_entity(
+            EntityMeta(
+                id="chenfeng",
+                type="角色",
+                canonical_name="陈锋",
+                current={},
+                first_appearance=1,
+                last_appearance=1,
+            )
+        )
+
+        aliases = manager.get_entity_aliases("chenfeng")
+        assert "陈锋" in aliases
+        assert manager.get_entities_by_alias("陈锋")[0]["id"] == "chenfeng"
+        assert manager.get_entity("陈锋")["id"] == "chenfeng"
 
     def test_entity_alias_and_relationships(self, temp_project):
         manager = IndexManager(temp_project)

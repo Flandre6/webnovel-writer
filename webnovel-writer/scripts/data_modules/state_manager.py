@@ -88,6 +88,21 @@ class _EntityPatch:
     appearance_chapter: Optional[int] = None
 
 
+def _unique_aliases(*groups: Any) -> List[str]:
+    result = []
+    seen = set()
+    for group in groups:
+        if not group:
+            continue
+        values = [group] if isinstance(group, str) else group
+        for value in values:
+            alias = str(value).strip() if value is not None else ""
+            if alias and alias not in seen:
+                seen.add(alias)
+                result.append(alias)
+    return result
+
+
 class StateManager:
     """状态管理器（v5.1 entities_v3 格式 + SQLite 同步，v5.4 沿用）"""
 
@@ -440,7 +455,7 @@ class StateManager:
                         tier=patch.base_entity.get("tier", "装饰"),
                         desc=patch.base_entity.get("desc", ""),
                         current=patch.base_entity.get("current", {}),
-                        aliases=[],
+                        aliases=patch.base_entity.get("aliases", []),
                         first_appearance=patch.base_entity.get("first_appearance", 0),
                         last_appearance=patch.base_entity.get("last_appearance", 0),
                         is_protagonist=patch.base_entity.get("is_protagonist", False)
@@ -658,7 +673,7 @@ class StateManager:
         """获取实体（v5.1 引入：优先从 SQLite 读取）"""
         # v5.1 引入: 优先从 SQLite 读取
         if self._sql_state_manager:
-            entity = self._sql_state_manager._index_manager.get_entity(entity_id)
+            entity = self._sql_state_manager.get_entity(entity_id)
             if entity:
                 return entity
 
@@ -763,6 +778,7 @@ class StateManager:
             "tier": entity.tier,
             "desc": "",
             "current": entity.attributes,
+            "aliases": list(entity.aliases),
             "first_appearance": entity.first_appearance,
             "last_appearance": entity.last_appearance,
             "history": []
@@ -1067,6 +1083,12 @@ class StateManager:
             entity_type = entity.get("type")
             if entity_id:
                 self.update_entity_appearance(entity_id, chapter, entity_type)
+                resolved_type = entity_type or self.get_entity_type(entity_id) or "角色"
+                for alias in _unique_aliases(entity.get("mentions", [])):
+                    entries = self._pending_alias_entries.setdefault(alias, [])
+                    alias_entry = {"type": resolved_type, "id": entity_id}
+                    if alias_entry not in entries:
+                        entries.append(alias_entry)
                 # v5.1 引入: 缓存用于 SQLite 同步
                 self._pending_sqlite_data["entities_appeared"].append(entity)
 
@@ -1079,7 +1101,9 @@ class StateManager:
                     name=entity.get("name", ""),
                     type=entity.get("type", "角色"),
                     tier=entity.get("tier", "装饰"),
-                    aliases=entity.get("mentions", []),
+                    aliases=_unique_aliases(
+                        entity.get("mentions", []), entity.get("aliases", [])
+                    ),
                     first_appearance=chapter,
                     last_appearance=chapter
                 )

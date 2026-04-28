@@ -98,6 +98,23 @@ class SQLStateManager:
         self.config = config or get_config()
         self._index_manager = IndexManager(config)
 
+    def _unique_aliases(self, *groups: Any) -> List[str]:
+        """合并 Data Agent 传入的 aliases/mentions，保持顺序并去重。"""
+        result = []
+        seen = set()
+
+        for group in groups:
+            if not group:
+                continue
+            values = [group] if isinstance(group, str) else group
+            for value in values:
+                alias = str(value).strip() if value is not None else ""
+                if alias and alias not in seen:
+                    seen.add(alias)
+                    result.append(alias)
+
+        return result
+
     # ==================== 实体操作 ====================
 
     def upsert_entity(self, entity: EntityData) -> bool:
@@ -143,7 +160,7 @@ class SQLStateManager:
         entity = self._index_manager.get_entity(entity_id)
         if entity:
             # 添加别名
-            entity["aliases"] = self._index_manager.get_entity_aliases(entity_id)
+            entity["aliases"] = self._index_manager.get_entity_aliases(entity["id"])
         return entity
 
     def get_entities_by_type(self, entity_type: str, include_archived: bool = False) -> List[Dict]:
@@ -302,17 +319,25 @@ class SQLStateManager:
             if not entity_id:
                 continue
 
-            self._index_manager.update_entity_current(entity_id, {})  # 触发 updated_at
-            # 更新 last_appearance
             existing = self._index_manager.get_entity(entity_id)
+            resolved_id = existing.get("id") if existing else entity_id
+
+            if existing:
+                self._index_manager.update_entity_current(resolved_id, {})  # 触发 updated_at
+                entity_type = entity.get("type") or existing.get("type", "角色")
+                for alias in self._unique_aliases(entity.get("mentions", [])):
+                    if self._index_manager.register_alias(alias, resolved_id, entity_type):
+                        stats["aliases"] += 1
+
+            # 更新 last_appearance
             if existing:
                 # 使用 SQL 直接更新 last_appearance
-                self._update_last_appearance(entity_id, chapter)
+                self._update_last_appearance(resolved_id, chapter)
                 stats["entities_updated"] += 1
 
             # 记录出场（保留原有逻辑）
             self._index_manager.record_appearance(
-                entity_id=entity_id,
+                entity_id=resolved_id,
                 chapter=chapter,
                 mentions=entity.get("mentions", []),
                 confidence=entity.get("confidence", 1.0)
@@ -331,7 +356,9 @@ class SQLStateManager:
                 tier=entity.get("tier", "装饰"),
                 desc=entity.get("desc", ""),
                 current=entity.get("current", {}),
-                aliases=entity.get("aliases", []),
+                aliases=self._unique_aliases(
+                    entity.get("aliases", []), entity.get("mentions", [])
+                ),
                 first_appearance=chapter,
                 last_appearance=chapter,
                 is_protagonist=entity.get("is_protagonist", False)
