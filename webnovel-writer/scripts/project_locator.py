@@ -283,6 +283,22 @@ def _resolve_project_root_from_pointer(cwd: Path, *, stop_at: Optional[Path] = N
     return None
 
 
+def _resolve_unique_child_project_root(root: Path) -> Optional[Path]:
+    """
+    Resolve a workspace root that contains exactly one direct child book project.
+
+    This supports commands invoked with a parent workspace path while keeping
+    ambiguous multi-book workspaces explicit.
+    """
+    try:
+        children = [child.resolve() for child in root.iterdir() if child.is_dir() and _is_project_root(child)]
+    except OSError:
+        return None
+    if len(children) == 1:
+        return children[0]
+    return None
+
+
 def _find_workspace_root_with_claude(start: Path) -> Optional[Path]:
     """Find nearest ancestor containing `.claude/`."""
     for candidate in (start, *start.parents):
@@ -356,6 +372,10 @@ def resolve_project_root(explicit_project_root: Optional[str] = None, *, cwd: Op
         pointer_root = _resolve_project_root_from_pointer(root, stop_at=_find_git_root(root))
         if pointer_root is not None:
             return pointer_root
+
+        child_root = _resolve_unique_child_project_root(root)
+        if child_root is not None:
+            return child_root
 
         # 兼容：显式传入“工作区根目录”但其 `.claude/` 在用户目录（全局安装）时，
         # workspace 内部可能没有指针文件。此时从用户级 registry 查找。

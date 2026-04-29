@@ -664,6 +664,11 @@ class IndexManager(IndexChapterMixin, IndexEntityMixin, IndexDebtMixin, IndexRea
             current[field] = delta.get("new")
 
         canonical_name = str(delta.get("canonical_name") or delta.get("name") or entity_id).strip()
+        is_protagonist = bool(delta.get("is_protagonist"))
+        if "is_protagonist" not in delta:
+            existing = self.get_entity(entity_id)
+            if existing:
+                is_protagonist = bool(existing.get("is_protagonist"))
         entity = EntityMeta(
             id=entity_id,
             type=str(delta.get("type") or "角色").strip() or "角色",
@@ -673,7 +678,7 @@ class IndexManager(IndexChapterMixin, IndexEntityMixin, IndexDebtMixin, IndexRea
             current=current,
             first_appearance=chapter,
             last_appearance=chapter,
-            is_protagonist=bool(delta.get("is_protagonist")),
+            is_protagonist=is_protagonist,
             is_archived=bool(delta.get("is_archived")),
         )
         self.upsert_entity(entity, update_metadata=True)

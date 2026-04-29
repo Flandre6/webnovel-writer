@@ -68,6 +68,42 @@ def _strip_project_root_args(argv: list[str]) -> list[str]:
     return out
 
 
+PASSTHROUGH_TOOLS = {
+    "index",
+    "state",
+    "rag",
+    "style",
+    "entity",
+    "context",
+    "memory",
+    "migrate",
+    "status",
+    "update-state",
+    "backup",
+    "archive",
+    "init",
+    "story-system",
+    "memory-contract",
+    "project-memory",
+}
+
+
+def _passthrough_tail(argv: list[str], tool: str) -> list[str]:
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == "--project-root":
+            i += 2
+            continue
+        if token.startswith("--project-root="):
+            i += 1
+            continue
+        if token == tool:
+            return list(argv[i + 1 :])
+        i += 1
+    return []
+
+
 def _run_data_module(module: str, argv: list[str]) -> int:
     """
     Import `data_modules.<module>` and call its main(), while isolating sys.argv.
@@ -103,9 +139,29 @@ def _run_script(script_name: str, argv: list[str]) -> int:
 
 
 def cmd_where(args: argparse.Namespace) -> int:
-    root = _resolve_root(args.project_root)
+    try:
+        root = _resolve_root(args.project_root)
+    except FileNotFoundError as exc:
+        print(_project_root_diagnostic(args.project_root, exc), file=sys.stderr)
+        return 1
     print(str(root))
     return 0
+
+
+def _project_root_diagnostic(
+    explicit_project_root: Optional[str], exc: FileNotFoundError
+) -> str:
+    if explicit_project_root:
+        return (
+            "未找到有效书项目根目录（需要包含 .webnovel/state.json）: "
+            f"{explicit_project_root}\n"
+            f"detail: {exc}"
+        )
+    return (
+        "当前工作区还没有激活的书项目（未找到 .webnovel/state.json）。\n"
+        "请先运行 webnovel init 创建项目，或运行 webnovel use <project_root> 绑定已有书项目。\n"
+        f"detail: {exc}"
+    )
 
 
 def _build_preflight_report(explicit_project_root: Optional[str]) -> dict:
@@ -130,6 +186,16 @@ def _build_preflight_report(explicit_project_root: Optional[str]) -> dict:
         project_root = str(resolved_root)
         checks.append({"name": "project_root", "ok": True, "path": project_root})
         story_runtime = build_story_runtime_health(resolved_root)
+    except FileNotFoundError as exc:
+        project_root_error = _project_root_diagnostic(explicit_project_root, exc)
+        checks.append(
+            {
+                "name": "project_root",
+                "ok": False,
+                "path": explicit_project_root or "",
+                "error": project_root_error,
+            }
+        )
     except Exception as exc:
         project_root_error = str(exc)
         checks.append({"name": "project_root", "ok": False, "path": explicit_project_root or "", "error": project_root_error})
@@ -309,15 +375,20 @@ def main() -> None:
     from .cli_args import normalize_global_project_root
 
     argv = normalize_global_project_root(sys.argv[1:])
-    args = parser.parse_args(argv)
+    args, unknown_args = parser.parse_known_args(argv)
 
     # where/use 直接执行
     if hasattr(args, "func"):
+        if unknown_args:
+            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
         code = int(args.func(args) or 0)
         raise SystemExit(code)
 
     tool = args.tool
-    rest = list(getattr(args, "args", []) or [])
+    if unknown_args and tool not in PASSTHROUGH_TOOLS:
+        parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+
+    rest = _passthrough_tail(argv, tool) if tool in PASSTHROUGH_TOOLS else list(getattr(args, "args", []) or [])
     # argparse.REMAINDER 可能以 `--` 开头占位，这里去掉
     if rest[:1] == ["--"]:
         rest = rest[1:]

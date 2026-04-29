@@ -295,6 +295,13 @@ def test_webnovel_write_skill_uses_chapter_commit_as_step5_mainline():
     assert "state process-chapter" not in text
 
 
+def test_webnovel_write_skill_uses_project_root_backup_not_bare_git_add():
+    text = (SKILLS_DIR / "webnovel-write" / "SKILL.md").read_text(encoding="utf-8")
+    assert "webnovel.py" in text
+    assert "--project-root \"${PROJECT_ROOT}\" backup" in text
+    assert "git add ." not in text
+
+
 def test_webnovel_query_skill_prefers_story_system_and_memory_contract():
     text = (SKILLS_DIR / "webnovel-query" / "SKILL.md").read_text(encoding="utf-8")
     assert "memory-contract load-context" in text

@@ -42,6 +42,18 @@ class IndexEntityMixin:
             self._register_alias_with_cursor(
                 cursor, canonical_name, entity.id, entity.type
             )
+        if entity.is_protagonist:
+            for alias in self._protagonist_aliases(entity, canonical_name):
+                self._register_alias_with_cursor(cursor, alias, entity.id, entity.type)
+
+    def _protagonist_aliases(self, entity: EntityMeta, canonical_name: str) -> List[str]:
+        aliases = ["protagonist", "主角"]
+        compact_id = str(entity.id or "").replace("_", "").replace("-", "").strip()
+        if compact_id and compact_id != entity.id:
+            aliases.append(compact_id)
+        if canonical_name:
+            aliases.append(canonical_name)
+        return list(dict.fromkeys(alias for alias in aliases if alias and alias != entity.id))
 
     def upsert_entity(self, entity: EntityMeta, update_metadata: bool = False) -> bool:
         """

@@ -95,6 +95,21 @@ def test_resolve_project_root_uses_workspace_pointer(tmp_path):
     assert resolved == project_root.resolve()
 
 
+def test_resolve_project_root_explicit_workspace_uses_unique_child_project(tmp_path):
+    _ensure_scripts_on_path()
+
+    from project_locator import resolve_project_root
+
+    workspace = tmp_path / "workspace"
+    (workspace / ".git").mkdir(parents=True, exist_ok=True)
+    project_root = workspace / "凡人资本论"
+    (project_root / ".webnovel").mkdir(parents=True, exist_ok=True)
+    (project_root / ".webnovel" / "state.json").write_text("{}", encoding="utf-8")
+
+    resolved = resolve_project_root(str(workspace))
+    assert resolved == project_root.resolve()
+
+
 def test_resolve_project_root_ignores_stale_pointer_and_fallbacks(tmp_path):
     _ensure_scripts_on_path()
 

@@ -95,6 +95,54 @@ def test_extract_context_forwards_with_resolved_project_root(monkeypatch, tmp_pa
     ]
 
 
+def test_backup_forwards_resolved_book_root_from_parent_workspace(monkeypatch, tmp_path):
+    module = _load_webnovel_module()
+
+    workspace_root = (tmp_path / "workspace").resolve()
+    book_root = (workspace_root / "book").resolve()
+    (workspace_root / ".git").mkdir(parents=True, exist_ok=True)
+    (book_root / ".git").mkdir(parents=True, exist_ok=True)
+    (book_root / ".webnovel").mkdir(parents=True, exist_ok=True)
+    (book_root / ".webnovel" / "state.json").write_text("{}", encoding="utf-8")
+    called = {}
+
+    def _fake_run_script(script_name, argv):
+        called["script_name"] = script_name
+        called["argv"] = list(argv)
+        return 0
+
+    monkeypatch.chdir(workspace_root)
+    monkeypatch.setattr(module, "_run_script", _fake_run_script)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "webnovel",
+            "--project-root",
+            str(workspace_root),
+            "backup",
+            "--chapter",
+            "2",
+            "--chapter-title",
+            "第二章",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        module.main()
+
+    assert int(exc.value.code or 0) == 0
+    assert called["script_name"] == "backup_manager.py"
+    assert called["argv"] == [
+        "--project-root",
+        str(book_root),
+        "--chapter",
+        "2",
+        "--chapter-title",
+        "第二章",
+    ]
+
+
 def test_webnovel_story_system_forwards_with_resolved_project_root(monkeypatch, tmp_path):
     module = _load_webnovel_module()
 
@@ -275,6 +323,50 @@ def test_preflight_includes_story_runtime_health(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr()
     assert '"story_runtime"' in captured.out
     assert '"mainline_ready"' in captured.out
+
+
+def test_where_reports_empty_workspace_without_traceback(monkeypatch, tmp_path, capsys):
+    module = _load_webnovel_module()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / ".git").mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.chdir(workspace)
+    monkeypatch.delenv("WEBNOVEL_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("WEBNOVEL_CLAUDE_HOME", str(tmp_path / "empty-claude-home"))
+    monkeypatch.setattr(sys, "argv", ["webnovel", "where"])
+
+    with pytest.raises(SystemExit) as exc:
+        module.main()
+
+    captured = capsys.readouterr()
+    assert int(exc.value.code or 0) == 1
+    assert "还没有激活的书项目" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_preflight_reports_empty_workspace_without_traceback(monkeypatch, tmp_path, capsys):
+    module = _load_webnovel_module()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / ".git").mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.chdir(workspace)
+    monkeypatch.delenv("WEBNOVEL_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("WEBNOVEL_CLAUDE_HOME", str(tmp_path / "empty-claude-home"))
+    monkeypatch.setattr(sys, "argv", ["webnovel", "preflight", "--format", "json"])
+
+    with pytest.raises(SystemExit) as exc:
+        module.main()
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert int(exc.value.code or 0) == 1
+    assert report["ok"] is False
+    assert "还没有激活的书项目" in report["project_root_error"]
+    assert "Traceback" not in captured.err
 
 
 def test_quality_trend_report_writes_to_book_root_when_input_is_workspace_root(tmp_path, monkeypatch):

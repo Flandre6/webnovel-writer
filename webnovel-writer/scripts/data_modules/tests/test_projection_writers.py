@@ -37,6 +37,71 @@ def test_state_projection_writer_applies_accepted_commit(tmp_path):
     payload = json.loads((tmp_path / ".webnovel" / "state.json").read_text(encoding="utf-8"))
     assert payload["entity_state"]["x"]["realm"] == "斗者"
     assert payload["progress"]["chapter_status"]["3"] == "chapter_committed"
+    assert payload["progress"]["current_chapter"] == 3
+    assert payload["progress"]["last_updated"]
+
+
+def test_accepted_chapter_commits_advance_progress_and_word_count(tmp_path):
+    (tmp_path / ".webnovel").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".webnovel" / "state.json").write_text(
+        json.dumps(
+            {"progress": {"current_chapter": 0, "total_words": 0, "last_updated": "2026-01-01 00:00:00"}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chapters_dir = tmp_path / "正文"
+    chapters_dir.mkdir(parents=True, exist_ok=True)
+    (chapters_dir / "第0001章.md").write_text("第一章正文内容", encoding="utf-8")
+    (chapters_dir / "第0002章.md").write_text("第二章正文内容更多", encoding="utf-8")
+
+    service = ChapterCommitService(tmp_path)
+    for chapter in (1, 2):
+        payload = service.build_commit(
+            chapter=chapter,
+            review_result={"blocking_count": 0},
+            fulfillment_result={"planned_nodes": [], "covered_nodes": [], "missed_nodes": [], "extra_nodes": []},
+            disambiguation_result={"pending": []},
+            extraction_result={"state_deltas": [], "entity_deltas": [], "accepted_events": []},
+        )
+        service.apply_projections(payload)
+
+    state = json.loads((tmp_path / ".webnovel" / "state.json").read_text(encoding="utf-8"))
+    assert state["progress"]["chapter_status"]["1"] == "chapter_committed"
+    assert state["progress"]["chapter_status"]["2"] == "chapter_committed"
+    assert state["progress"]["current_chapter"] == 2
+    assert state["progress"]["total_words"] > 0
+    assert state["progress"]["last_updated"] != "2026-01-01 00:00:00"
+
+
+def test_reapplying_accepted_chapter_commit_does_not_double_count_words(tmp_path):
+    (tmp_path / ".webnovel").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".webnovel" / "state.json").write_text(
+        json.dumps(
+            {"progress": {"current_chapter": 0, "total_words": 0}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chapters_dir = tmp_path / "正文"
+    chapters_dir.mkdir(parents=True, exist_ok=True)
+    (chapters_dir / "第0001章.md").write_text("第一章正文内容", encoding="utf-8")
+
+    payload = {
+        "meta": {"status": "accepted", "chapter": 1},
+        "state_deltas": [],
+        "accepted_events": [],
+    }
+    writer = StateProjectionWriter(tmp_path)
+    writer.apply(payload)
+    first_state = json.loads((tmp_path / ".webnovel" / "state.json").read_text(encoding="utf-8"))
+
+    writer.apply(payload)
+    second_state = json.loads((tmp_path / ".webnovel" / "state.json").read_text(encoding="utf-8"))
+
+    assert second_state["progress"]["current_chapter"] == 1
+    assert second_state["progress"]["total_words"] == first_state["progress"]["total_words"]
+    assert second_state["progress"]["last_updated"] == first_state["progress"]["last_updated"]
 
 
 def test_state_projection_writer_derives_delta_from_power_breakthrough_event(tmp_path):
@@ -106,6 +171,67 @@ def test_index_projection_writer_applies_entity_delta(tmp_path):
     assert result["applied"] is True
     assert entity["canonical_name"] == "萧炎"
     assert entity["current_json"]["realm"] == "斗者"
+
+
+def test_index_projection_writer_registers_stable_protagonist_aliases(tmp_path):
+    cfg = DataModulesConfig.from_project_root(tmp_path)
+    cfg.ensure_dirs()
+    writer = IndexProjectionWriter(tmp_path)
+
+    result = writer.apply(
+        {
+            "meta": {"status": "accepted", "chapter": 1},
+            "entity_deltas": [
+                {
+                    "entity_id": "lu_ming",
+                    "canonical_name": "陆鸣",
+                    "type": "角色",
+                    "tier": "核心",
+                    "chapter": 1,
+                    "is_protagonist": True,
+                }
+            ],
+        }
+    )
+
+    manager = IndexManager(cfg)
+    assert result["applied"] is True
+    assert manager.get_entity("lu_ming")["canonical_name"] == "陆鸣"
+    assert manager.get_entity("陆鸣")["id"] == "lu_ming"
+    assert manager.get_entity("protagonist")["id"] == "lu_ming"
+    assert manager.get_entity("luming")["id"] == "lu_ming"
+
+
+def test_entity_delta_without_protagonist_flag_preserves_existing_protagonist(tmp_path):
+    cfg = DataModulesConfig.from_project_root(tmp_path)
+    cfg.ensure_dirs()
+    manager = IndexManager(cfg)
+    manager.apply_entity_delta(
+        {
+            "entity_id": "lu_ming",
+            "canonical_name": "陆鸣",
+            "type": "角色",
+            "tier": "核心",
+            "chapter": 1,
+            "is_protagonist": True,
+        }
+    )
+
+    manager.apply_entity_delta(
+        {
+            "entity_id": "lu_ming",
+            "canonical_name": "陆鸣",
+            "type": "角色",
+            "tier": "核心",
+            "chapter": 2,
+            "field": "realm",
+            "new": "炼气二层",
+        }
+    )
+
+    assert manager.get_protagonist()["id"] == "lu_ming"
+    assert manager.get_entity("protagonist")["id"] == "lu_ming"
+    assert manager.get_entity("lu_ming")["is_protagonist"] == 1
 
 
 def test_index_projection_writer_derives_relationship_from_event(tmp_path):
