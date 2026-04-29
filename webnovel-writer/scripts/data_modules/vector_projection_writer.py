@@ -72,20 +72,54 @@ class VectorProjectionWriter:
         payload = event.get("payload") or {}
 
         if event_type == "power_breakthrough":
-            new_val = str(payload.get("new") or payload.get("to") or "").strip()
+            new_val = str(
+                payload.get("new")
+                or payload.get("to")
+                or payload.get("new_value")
+                or payload.get("new_state")
+                or ""
+            ).strip()
             return f"第{chapter}章：{subject}突破至{new_val}" if new_val else ""
         elif event_type == "character_state_changed":
-            field = str(payload.get("field") or "").strip()
-            new_val = str(payload.get("new") or payload.get("to") or "").strip()
-            return f"第{chapter}章：{subject}的{field}变为{new_val}" if field and new_val else ""
+            field = str(
+                payload.get("field") or payload.get("field_path") or ""
+            ).strip()
+            new_val = str(
+                payload.get("new")
+                or payload.get("to")
+                or payload.get("new_value")
+                or payload.get("new_state")
+                or ""
+            ).strip()
+            description = str(payload.get("description") or "").strip()
+            if field and new_val:
+                return f"第{chapter}章：{subject}的{field}变为{new_val}"
+            if new_val:
+                return f"第{chapter}章：{subject}变化为{new_val}"
+            if description:
+                return f"第{chapter}章：{subject}：{description}"
+            return ""
         elif event_type == "relationship_changed":
             to_entity = str(payload.get("to_entity") or payload.get("to") or "").strip()
             rel_type = str(payload.get("relationship_type") or payload.get("type") or "").strip()
             return f"第{chapter}章：{subject}与{to_entity}关系变为{rel_type}" if to_entity else ""
         elif event_type in ("world_rule_revealed", "world_rule_broken"):
-            desc = str(payload.get("description") or payload.get("rule") or "").strip()
+            desc = str(
+                payload.get("description")
+                or payload.get("rule")
+                or payload.get("rule_content")
+                or ""
+            ).strip()
             action = "揭示" if "revealed" in event_type else "打破"
             return f"第{chapter}章：{action}世界规则——{desc}" if desc else ""
+        elif event_type == "open_loop_created":
+            description = str(
+                payload.get("description")
+                or payload.get("unanswered_question")
+                or payload.get("content")
+                or ""
+            ).strip()
+            return f"第{chapter}章：{subject}埋下悬念——{description}" if description else ""
         elif event_type == "artifact_obtained":
             name = str(payload.get("name") or subject or "").strip()
             owner = str(payload.get("owner") or payload.get("holder") or "").strip()

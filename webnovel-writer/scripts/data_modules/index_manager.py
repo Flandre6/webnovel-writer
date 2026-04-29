@@ -659,22 +659,48 @@ class IndexManager(IndexChapterMixin, IndexEntityMixin, IndexDebtMixin, IndexRea
             return False
 
         current = dict(delta.get("current") or {})
-        field = str(delta.get("field") or "").strip()
-        if field and "new" in delta and field not in current:
-            current[field] = delta.get("new")
+        field = str(delta.get("field") or delta.get("field_path") or "").strip()
+        if field:
+            new_value = (
+                delta.get("new")
+                if "new" in delta
+                else delta.get("new_value")
+                if "new_value" in delta
+                else None
+            )
+            if new_value is not None and field not in current:
+                current[field] = new_value
 
-        canonical_name = str(delta.get("canonical_name") or delta.get("name") or entity_id).strip()
+        payload = delta.get("payload") or {}
+        canonical_name = str(
+            delta.get("canonical_name")
+            or delta.get("name")
+            or payload.get("name")
+            or entity_id
+        ).strip()
+
+        tier = str(delta.get("tier") or "装饰").strip() or "装饰"
         is_protagonist = bool(delta.get("is_protagonist"))
-        if "is_protagonist" not in delta:
+        # tier='主角' 视同 is_protagonist=True（LLM 实际输出常用 tier 标注）
+        if not is_protagonist and tier == "主角":
+            is_protagonist = True
+        if "is_protagonist" not in delta and tier != "主角":
             existing = self.get_entity(entity_id)
             if existing:
                 is_protagonist = bool(existing.get("is_protagonist"))
+
+        entity_type = str(
+            delta.get("type")
+            or delta.get("entity_type")
+            or "角色"
+        ).strip() or "角色"
+
         entity = EntityMeta(
             id=entity_id,
-            type=str(delta.get("type") or "角色").strip() or "角色",
+            type=entity_type,
             canonical_name=canonical_name,
-            tier=str(delta.get("tier") or "装饰").strip() or "装饰",
-            desc=str(delta.get("desc") or "").strip(),
+            tier=tier,
+            desc=str(delta.get("desc") or delta.get("description") or "").strip(),
             current=current,
             first_appearance=chapter,
             last_appearance=chapter,

@@ -29,6 +29,32 @@ class MemoryWriter:
         stats["items_updated"] += int(result.get("updated", 0))
         stats["items_outdated"] += int(result.get("outdated", 0))
 
+    @staticmethod
+    def _coerce_loop_content(payload: Dict[str, Any], event: Dict[str, Any]) -> str:
+        """从 open_loop 事件 payload 多个候选字段里取出有意义的悬念内容。
+
+        优先级：content（旧 schema）→ unanswered_question（信息悬疑）
+        → loop_type + description（结构化）→ description → subject 兜底。
+        若兜底到 subject（通常是角色 ID），加上 loop_type 前缀避免变成纯 ID。
+        """
+        for key in ("content", "unanswered_question"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+
+        description = str(payload.get("description") or "").strip()
+        loop_type = str(payload.get("loop_type") or "").strip()
+
+        if description and loop_type:
+            return f"{loop_type}：{description}"
+        if description:
+            return description
+        if loop_type:
+            return loop_type
+
+        subject = str(event.get("subject") or "").strip()
+        return subject
+
     def update_from_chapter_result(self, chapter: int, result: Dict[str, Any]) -> Dict[str, Any]:
         stats: Dict[str, Any] = {
             "chapter": int(chapter),
@@ -41,17 +67,31 @@ class MemoryWriter:
         # Stage 2: 零成本结构化映射
         for change in result.get("state_changes", []) or []:
             entity_id = str(change.get("entity_id", "") or "").strip()
-            field = str(change.get("field", "") or "").strip()
+            field = str(
+                change.get("field", "")
+                or change.get("field_path", "")
+                or ""
+            ).strip()
             if not entity_id or not field:
                 continue
+            new_val = change.get("new")
+            if new_val is None:
+                new_val = change.get("new_value")
+            if new_val is None:
+                new_val = change.get("to")
+            old_val = change.get("old")
+            if old_val is None:
+                old_val = change.get("old_value")
+            if old_val is None:
+                old_val = change.get("from")
             item = MemoryItem(
                 id=self._item_id("character_state", entity_id, field, chapter),
                 layer="semantic",
                 category="character_state",
                 subject=entity_id,
                 field=field,
-                value=str(change.get("new", "") or ""),
-                payload={"old_value": change.get("old")},
+                value=str(new_val if new_val is not None else "" or ""),
+                payload={"old_value": old_val},
                 source_chapter=int(chapter),
                 evidence=[f"state_change:{entity_id}:{field}:{chapter}"],
             )
@@ -69,7 +109,10 @@ class MemoryWriter:
                 subject=entity_id,
                 field="first_seen",
                 value=name,
-                payload={"tier": entity.get("tier"), "type": entity.get("type")},
+                payload={
+                    "tier": entity.get("tier"),
+                    "type": entity.get("type") or entity.get("entity_type"),
+                },
                 source_chapter=int(chapter),
                 evidence=[f"entity_new:{entity_id}:{chapter}"],
             )
@@ -242,28 +285,52 @@ class MemoryWriter:
             event_type = str(event.get("event_type") or "").strip()
             payload = event.get("payload") or {}
             if event_type in {"world_rule_revealed", "world_rule_broken"}:
-                rule_text = str(payload.get("proposed_value") or payload.get("rule") or payload.get("base_value") or "").strip()
+                rule_text = str(
+                    payload.get("rule_content")
+                    or payload.get("proposed_value")
+                    or payload.get("rule")
+                    or payload.get("base_value")
+                    or payload.get("description")
+                    or ""
+                ).strip()
                 if rule_text:
                     memory_facts["world_rules"].append(
                         {
                             "rule": rule_text,
                             "scope": payload.get("scope") or "global",
-                            "domain": payload.get("domain") or event.get("subject") or "global",
+                            "domain": (
+                                payload.get("domain")
+                                or payload.get("rule_category")
+                                or event.get("subject")
+                                or "global"
+                            ),
                             "field": payload.get("field") or event_type,
                         }
                     )
             elif event_type == "open_loop_created":
-                content = str(payload.get("content") or event.get("subject") or "").strip()
+                content = self._coerce_loop_content(payload, event)
                 if content:
                     memory_facts["open_loops"].append(
                         {
                             "content": content,
                             "status": payload.get("status") or "active",
                             "urgency": payload.get("urgency") or 0,
+                            "planted_chapter": (
+                                payload.get("planted_chapter") or event.get("chapter") or chapter
+                            ),
+                            "expected_payoff": (
+                                payload.get("expected_payoff")
+                                or payload.get("loop_deadline")
+                            ),
                         }
                     )
             elif event_type in {"promise_created", "promise_paid_off"}:
-                content = str(payload.get("content") or event.get("subject") or "").strip()
+                content = str(
+                    payload.get("content")
+                    or payload.get("description")
+                    or event.get("subject")
+                    or ""
+                ).strip()
                 if content:
                     memory_facts["reader_promises"].append(
                         {
@@ -277,8 +344,12 @@ class MemoryWriter:
             "entities_new": [
                 {
                     "suggested_id": row.get("entity_id") or row.get("id"),
-                    "name": row.get("canonical_name") or row.get("name") or row.get("entity_id") or row.get("id"),
-                    "type": row.get("type") or "角色",
+                    "name": row.get("canonical_name")
+                    or (row.get("payload") or {}).get("name")
+                    or row.get("name")
+                    or row.get("entity_id")
+                    or row.get("id"),
+                    "type": row.get("type") or row.get("entity_type") or "角色",
                     "tier": row.get("tier") or "装饰",
                 }
                 for row in entity_deltas

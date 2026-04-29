@@ -88,7 +88,7 @@ hook_strength: "strong"
   "entities_appeared": [{"id": "xiaoyan", "type": "角色", "mentions": ["萧炎"], "confidence": 0.95}],
   "entities_new": [{"suggested_id": "hongyi_girl", "name": "红衣女子", "type": "角色", "tier": "装饰"}],
   "state_deltas": [{"entity_id": "xiaoyan", "field": "realm", "old": "斗者", "new": "斗师"}],
-  "entity_deltas": [{"entity_id": "hongyi_girl", "action": "upsert", "payload": {"name": "红衣女子"}}],
+  "entity_deltas": [{"entity_id": "hongyi_girl", "action": "upsert", "entity_type": "角色", "tier": "装饰", "payload": {"name": "红衣女子"}}],
   "accepted_events": [],
   "summary_text": "摘要",
   "scenes_chunked": 4,
@@ -96,6 +96,19 @@ hook_strength: "strong"
   "bottlenecks_top3": []
 }
 ```
+
+### 7.1 字段命名硬性约定（投影器读不到不同义词，必须严格遵守）
+
+- **state_deltas 子项**：必须用 `field`（不是 `field_path`），`new`（不是 `new_value`），`old`（不是 `old_value`）。简单字段名直接写（如 `realm`），嵌套路径用点号（如 `power.realm`、`location.current`）。投影器会自动展开嵌套字典。
+- **entity_deltas 子项**：必须用 `entity_type`（不是 `type`），值为 `角色|组织|地点|物品|势力` 等，不是默认填 `"角色"`。`is_protagonist: true` 用于标记主角，主角字段会同步到 `state.protagonist_state`。
+- **accepted_events 通用**：`event_type` 用枚举值（`character_state_changed|power_breakthrough|relationship_changed|world_rule_revealed|world_rule_broken|open_loop_created|promise_created|promise_paid_off|artifact_obtained`）。`subject` 是事件主体的 entity_id（不是中文名）。
+- **character_state_changed.payload**：用 `field`（或 `field_path`）+ `new`（或 `new_state`/`new_value`）+ `old`（或 `previous_state`/`old_value`）。建议直接用 `field` + `new` + `old` 与 state_deltas 保持一致。
+- **open_loop_created.payload**：必须有 `content`（悬念正文），可选 `loop_type`（悬念类型）、`unanswered_question`（核心疑问）、`urgency`、`planted_chapter`、`expected_payoff`/`loop_deadline`。投影器会从 content > unanswered_question > description 取值，不要省略 content。
+- **world_rule_revealed.payload**：必须有 `rule_content`（或 `rule`、`description`），可选 `rule_category` / `domain`、`scope`。
+- **relationship_changed.payload**：必须有 `to_entity` 和 `relationship_type`（不是 `type`）。
+- **artifact_obtained.payload**：必须有 `artifact_id`、`name`、`owner`（或 `holder`）。
+
+注：旧字段名（`field_path`、`new_value`、`type`、`description` 等）作为兼容输入也能被正确投影，但首选清单中列出的规范名。
 
 ## 8. 错误处理
 

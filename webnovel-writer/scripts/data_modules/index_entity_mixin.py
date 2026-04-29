@@ -94,6 +94,7 @@ class IndexEntityMixin:
                     cursor.execute(
                         """
                         UPDATE entities SET
+                            type = ?,
                             canonical_name = ?,
                             tier = ?,
                             desc = ?,
@@ -105,6 +106,7 @@ class IndexEntityMixin:
                         WHERE id = ?
                     """,
                         (
+                            entity.type,
                             entity.canonical_name,
                             entity.tier,
                             entity.desc,
@@ -170,7 +172,24 @@ class IndexEntityMixin:
                 return self._row_to_dict(row, parse_json=["current_json"])
 
         alias_matches = self.get_entities_by_alias(entity_id)
-        return alias_matches[0] if alias_matches else None
+        if alias_matches:
+            return alias_matches[0]
+
+        # ID 命名风格兜底：调用方传 'lu_ming' 但实体登记为 'luming' 时，
+        # 把分隔符（下划线/连字符）剥掉再试一次直接 ID 查询。
+        compact = str(entity_id or "").replace("_", "").replace("-", "").strip()
+        if compact and compact != entity_id:
+            with self._get_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM entities WHERE id = ?", (compact,))
+                row = cursor.fetchone()
+                if row:
+                    return self._row_to_dict(row, parse_json=["current_json"])
+            alias_matches = self.get_entities_by_alias(compact)
+            if alias_matches:
+                return alias_matches[0]
+
+        return None
 
     def get_entities_by_type(
         self, entity_type: str, include_archived: bool = False

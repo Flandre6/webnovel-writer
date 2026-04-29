@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from .story_contracts import read_json_if_exists, write_json
 
@@ -41,13 +42,19 @@ class StateProjectionWriter:
         progress = state.setdefault("progress", {})
         chapter_status = progress.setdefault("chapter_status", {})
 
+        protagonist_ids = self._collect_protagonist_ids(commit_payload, state)
+
         applied_count = 0
         for delta in self._collect_state_deltas(commit_payload):
             entity_id = str(delta.get("entity_id") or "").strip()
             field = str(delta.get("field") or "").strip()
             if not entity_id or not field:
                 continue
-            entity_state.setdefault(entity_id, {})[field] = delta.get("new")
+            new_value = delta.get("new")
+            entity_bucket = entity_state.setdefault(entity_id, {})
+            self._set_path(entity_bucket, field, new_value)
+            if entity_id in protagonist_ids:
+                self._set_path(state.setdefault("protagonist_state", {}), field, new_value)
             applied_count += 1
 
         if chapter > 0:
@@ -79,12 +86,13 @@ class StateProjectionWriter:
         }
 
     def _collect_state_deltas(self, commit_payload: dict) -> list[dict]:
-        deltas = [dict(delta) for delta in (commit_payload.get("state_deltas") or []) if isinstance(delta, dict)]
+        deltas = [
+            self._normalize_state_delta(delta)
+            for delta in (commit_payload.get("state_deltas") or [])
+            if isinstance(delta, dict)
+        ]
         seen = {
-            (
-                str(delta.get("entity_id") or "").strip(),
-                str(delta.get("field") or "").strip(),
-            )
+            (str(delta.get("entity_id") or "").strip(), str(delta.get("field") or "").strip())
             for delta in deltas
         }
 
@@ -99,9 +107,11 @@ class StateProjectionWriter:
 
             field = ""
             if event_type == "power_breakthrough":
-                field = str(payload.get("field") or "realm").strip()
+                field = (
+                    str(payload.get("field") or payload.get("field_path") or "realm").strip()
+                )
             elif event_type == "character_state_changed":
-                field = str(payload.get("field") or "").strip()
+                field = str(payload.get("field") or payload.get("field_path") or "").strip()
             else:
                 continue
 
@@ -114,11 +124,94 @@ class StateProjectionWriter:
                 {
                     "entity_id": entity_id,
                     "field": field,
-                    "old": payload.get("old") if "old" in payload else payload.get("from"),
-                    "new": payload.get("new") if "new" in payload else payload.get("to"),
+                    "old": (
+                        payload.get("old")
+                        if "old" in payload
+                        else payload.get("from")
+                        if "from" in payload
+                        else payload.get("old_value")
+                        if "old_value" in payload
+                        else payload.get("previous_state")
+                    ),
+                    "new": (
+                        payload.get("new")
+                        if "new" in payload
+                        else payload.get("to")
+                        if "to" in payload
+                        else payload.get("new_value")
+                        if "new_value" in payload
+                        else payload.get("new_state")
+                    ),
                 }
             )
         return deltas
+
+    @staticmethod
+    def _normalize_state_delta(delta: dict) -> dict:
+        """统一 state_delta 字段名：field/field_path → field, new/new_value → new."""
+        result = dict(delta)
+        if "field" not in result and "field_path" in result:
+            result["field"] = result["field_path"]
+        if "new" not in result and "new_value" in result:
+            result["new"] = result["new_value"]
+        if "old" not in result and "old_value" in result:
+            result["old"] = result["old_value"]
+        return result
+
+    @staticmethod
+    def _set_path(target: dict, path: str, value: Any) -> None:
+        """支持点号路径写入嵌套字典：'power.realm' → target['power']['realm']=value。"""
+        if not isinstance(target, dict) or not path:
+            return
+        if "." not in path:
+            target[path] = value
+            return
+        parts = path.split(".")
+        cursor = target
+        for part in parts[:-1]:
+            nxt = cursor.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                cursor[part] = nxt
+            cursor = nxt
+        cursor[parts[-1]] = value
+
+    def _collect_protagonist_ids(self, commit_payload: dict, state: dict) -> set[str]:
+        """聚合本次 commit + state.json 中已知的主角实体 ID。
+
+        识别信号（任一命中即视为主角）：
+        - entity_deltas 子项 `is_protagonist: true`
+        - entity_deltas 子项 `tier == "主角"`
+        - entity_deltas 的 canonical_name 与 state.protagonist_state.name 相同
+        - state.protagonist_state.entity_id 已经被显式设置过
+        """
+        ids: set[str] = set()
+
+        protagonist_state = state.get("protagonist_state") or {}
+        existing_eid = str(protagonist_state.get("entity_id") or "").strip()
+        if existing_eid:
+            ids.add(existing_eid)
+        protagonist_name = str(protagonist_state.get("name") or "").strip()
+
+        for delta in commit_payload.get("entity_deltas") or []:
+            if not isinstance(delta, dict):
+                continue
+            eid = str(delta.get("entity_id") or delta.get("id") or "").strip()
+            if not eid:
+                continue
+            tier = str(delta.get("tier") or "").strip()
+            canonical = str(
+                delta.get("canonical_name")
+                or (delta.get("payload") or {}).get("name")
+                or ""
+            ).strip()
+            if (
+                delta.get("is_protagonist")
+                or tier == "主角"
+                or (protagonist_name and canonical == protagonist_name)
+            ):
+                ids.add(eid)
+        return ids
 
     def _project_total_words(self, chapter_status: dict) -> int:
         total = 0
