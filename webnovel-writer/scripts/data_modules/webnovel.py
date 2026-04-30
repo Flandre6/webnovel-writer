@@ -360,6 +360,14 @@ def main() -> None:
     p_review_pipeline.add_argument("--report-file", default="", help="审查报告路径")
     p_review_pipeline.add_argument("--save-metrics", action="store_true", help="直接写入 index.db")
 
+    p_placeholder_scan = sub.add_parser("placeholder-scan", help="扫描大纲/设定集未补齐占位")
+    p_placeholder_scan.add_argument("--format", choices=["json", "text"], default="json", help="输出格式")
+
+    p_master_outline_sync = sub.add_parser("master-outline-sync", help="当前卷规划完成后写回 V+1 最小总纲锚点")
+    p_master_outline_sync.add_argument("--volume", type=int, required=True, help="当前已完成规划的卷号")
+    p_master_outline_sync.add_argument("--writeback-file", default="", help="显式结构化写回 JSON")
+    p_master_outline_sync.add_argument("--format", choices=["json", "text"], default="json", help="输出格式")
+
     knowledge_parser = sub.add_parser("knowledge", help="时序知识查询")
     knowledge_sub = knowledge_parser.add_subparsers(dest="knowledge_action")
 
@@ -467,6 +475,13 @@ def main() -> None:
         if args.save_metrics:
             return_args.append("--save-metrics")
         raise SystemExit(_run_script("review_pipeline.py", return_args))
+    if tool == "placeholder-scan":
+        raise SystemExit(_run_data_module("placeholder_scanner", [*forward_args, "--format", str(args.format)]))
+    if tool == "master-outline-sync":
+        return_args = [*forward_args, "--volume", str(args.volume), "--format", str(args.format)]
+        if args.writeback_file:
+            return_args.extend(["--writeback-file", str(args.writeback_file)])
+        raise SystemExit(_run_script("update_master_outline.py", return_args))
 
     if tool == "knowledge":
         from .knowledge_query import KnowledgeQuery

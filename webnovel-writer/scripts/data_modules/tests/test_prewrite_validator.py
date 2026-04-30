@@ -64,3 +64,39 @@ def test_prewrite_validator_blocks_when_required_contracts_missing(tmp_path):
     assert payload["blocking"] is True
     assert "missing_contracts" in payload
     assert set(payload["missing_contracts"]) >= {"master_setting", "review_contract"}
+
+
+def test_prewrite_validator_blocks_related_entity_placeholders(tmp_path):
+    project_root = tmp_path
+    (project_root / ".webnovel").mkdir(parents=True, exist_ok=True)
+    (project_root / ".webnovel" / "state.json").write_text(
+        json.dumps(
+            {
+                "disambiguation_pending": [],
+                "disambiguation_warnings": [],
+                "chapter_meta": {},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings_dir = project_root / "设定集"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    (settings_dir / "苏云.md").write_text("苏云：第一位女主（暂名）\n", encoding="utf-8")
+    (settings_dir / "远期角色.md").write_text("后续兄弟：[待补充]\n", encoding="utf-8")
+
+    payload = PrewriteValidator(project_root).build(
+        chapter=8,
+        review_contract={},
+        plot_structure={},
+        story_contract={
+            "master_setting": {"ok": True},
+            "chapter_brief": {"chapter_directive": {"key_entities": ["苏云"]}},
+            "volume_brief": {"ok": True},
+            "review_contract": {"ok": True},
+        },
+    )
+
+    assert payload["blocking"] is True
+    assert any("占位" in reason for reason in payload["blocking_reasons"])
+    assert [item["file"] for item in payload["related_placeholders"]] == ["设定集/苏云.md"]

@@ -32,6 +32,7 @@ class MasterSetting(BaseModel):
 class ChapterBrief(BaseModel):
     meta: ContractMeta
     override_allowed: Dict[str, Any] = Field(default_factory=dict)
+    chapter_directive: Dict[str, Any] = Field(default_factory=dict)
     dynamic_context: List[Dict[str, Any]] = Field(default_factory=list)
     source_trace: List[Dict[str, Any]] = Field(default_factory=list)
 

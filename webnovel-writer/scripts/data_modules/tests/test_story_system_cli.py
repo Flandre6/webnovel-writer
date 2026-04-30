@@ -127,3 +127,35 @@ def test_story_system_default_csv_dir_routes_real_genre_seed(tmp_path, monkeypat
     payload = json.loads(capsys.readouterr().out)
     assert payload["master_setting"]["route"]["primary_genre"] == "玄幻退婚流"
     assert payload["master_setting"]["route"]["route_source"] != "empty_csv_fallback"
+
+
+def test_story_system_warns_on_placeholder_query(tmp_path, monkeypatch, capsys):
+    project_root = tmp_path / "book"
+    (project_root / ".webnovel").mkdir(parents=True, exist_ok=True)
+    (project_root / ".webnovel" / "state.json").write_text("{}", encoding="utf-8")
+    csv_dir = tmp_path / "csv"
+    csv_dir.mkdir()
+    _write_csv(csv_dir / "题材与调性推理.csv", ["编号", "关键词"], [])
+
+    from story_system import main
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "story_system",
+            "{章纲目标}",
+            "--project-root",
+            str(project_root),
+            "--chapter",
+            "1",
+            "--csv-dir",
+            str(csv_dir),
+            "--format",
+            "json",
+        ],
+    )
+    main()
+
+    captured = capsys.readouterr()
+    assert "placeholder" in captured.err

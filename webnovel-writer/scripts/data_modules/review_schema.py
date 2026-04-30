@@ -7,9 +7,16 @@
 """
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+try:
+    from security_utils import atomic_write_json
+except ImportError:  # pragma: no cover
+    from scripts.security_utils import atomic_write_json
 
 VALID_SEVERITIES = {"critical", "high", "medium", "low"}
 VALID_CATEGORIES = {
@@ -174,3 +181,48 @@ def parse_review_output(chapter: int, raw: Dict[str, Any]) -> ReviewResult:
         issues=issues,
         summary=str(raw.get("summary", "")),
     )
+
+
+def _read_json_if_exists(path: Path) -> Any | None:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Bad JSON in {path}") from exc
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    atomic_write_json(path, payload, backup=True)
+
+
+def append_ai_flavor_anti_patterns(project_root: str | Path, result: ReviewResult) -> int:
+    root = Path(project_root).expanduser().resolve()
+    path = root / ".story-system" / "anti_patterns.json"
+    existing = _read_json_if_exists(path) or []
+    if not isinstance(existing, list):
+        existing = []
+
+    seen_texts = {str(item.get("text") or "").strip() for item in existing if isinstance(item, dict)}
+    additions: List[Dict[str, Any]] = []
+    for index, issue in enumerate(result.issues, start=1):
+        if issue.category != "ai_flavor" or issue.severity not in {"medium", "high", "critical"}:
+            continue
+        text = (issue.evidence or issue.description or "").strip()[:200]
+        if not text or text in seen_texts:
+            continue
+        seen_texts.add(text)
+        additions.append(
+            {
+                "text": text,
+                "source_table": "review_extracted",
+                "source_id": f"ch{int(result.chapter):04d}_issue_{index}",
+                "category": issue.category,
+                "added_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+
+    if additions:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(path, [*existing, *additions])
+    return len(additions)

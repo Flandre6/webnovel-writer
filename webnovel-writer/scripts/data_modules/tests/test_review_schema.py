@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """审查 schema 测试"""
+import json
+
 import pytest
-from data_modules.review_schema import ReviewIssue, ReviewResult, parse_review_output
+from data_modules.review_schema import (
+    ReviewIssue,
+    ReviewResult,
+    append_ai_flavor_anti_patterns,
+    parse_review_output,
+)
 
 
 def test_review_issue_blocking_defaults():
@@ -115,3 +122,50 @@ def test_review_result_to_metrics_dict():
     assert metrics["overall_score"] < 100
     assert metrics["dimension_scores"]["continuity"] < 100
     assert metrics["dimension_scores"]["ai_flavor"] < 100
+
+
+def test_ai_flavor_review_issue_added_to_anti_patterns(tmp_path):
+    result = ReviewResult(
+        chapter=2,
+        issues=[
+            ReviewIssue(
+                severity="medium",
+                category="ai_flavor",
+                evidence="唯一一个知道复利公式的人。唯一一个知道账本秘密的人。",
+            ),
+            ReviewIssue(severity="low", category="ai_flavor", evidence="低风险句式"),
+            ReviewIssue(severity="high", category="logic", evidence="逻辑问题"),
+        ],
+    )
+
+    added = append_ai_flavor_anti_patterns(tmp_path, result)
+
+    patterns = json.loads((tmp_path / ".story-system" / "anti_patterns.json").read_text(encoding="utf-8"))
+    assert added == 1
+    assert any("唯一一个知道" in item["text"] for item in patterns)
+    assert patterns[0]["source_id"].startswith("ch0002_issue_")
+
+
+def test_ai_flavor_review_feedback_dedupes_evidence(tmp_path):
+    existing = tmp_path / ".story-system" / "anti_patterns.json"
+    existing.parent.mkdir(parents=True)
+    existing.write_text(
+        json.dumps([{"text": "第一片 / 第二片 / 第三片", "source_table": "review_extracted"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    result = ReviewResult(
+        chapter=3,
+        issues=[
+            ReviewIssue(
+                severity="high",
+                category="ai_flavor",
+                evidence="第一片 / 第二片 / 第三片",
+            )
+        ],
+    )
+
+    added = append_ai_flavor_anti_patterns(tmp_path, result)
+
+    patterns = json.loads(existing.read_text(encoding="utf-8"))
+    assert added == 0
+    assert len(patterns) == 1

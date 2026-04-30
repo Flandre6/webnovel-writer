@@ -22,7 +22,8 @@ from typing import Any, Dict, Optional, Union
 try:
     from filelock import FileLock
     HAS_FILELOCK = True
-except ImportError:
+except (ImportError, OSError):
+    FileLock = None  # type: ignore[assignment]
     HAS_FILELOCK = False
 
 

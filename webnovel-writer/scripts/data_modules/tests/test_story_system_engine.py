@@ -398,3 +398,175 @@ def test_build_uses_canonical_genre_for_reasoning_lookup():
 
     assert contract["master_setting"]["route"]["canonical_genre"] == "玄幻"
     assert contract["chapter_brief"]["reasoning"]["genre"] == "玄幻"
+
+
+def test_chapter_focus_uses_directive_goal_not_dynamic_summary():
+    csv_dir = _make_local_tmp_path() / "csv"
+    csv_dir.mkdir()
+    _write_csv(
+        csv_dir / "题材与调性推理.csv",
+        [
+            "编号", "适用技能", "分类", "层级", "关键词", "意图与同义词", "适用题材",
+            "大模型指令", "核心摘要", "详细展开", "题材/流派", "canonical_genre", "题材别名", "核心调性",
+            "节奏策略", "毒点", "推荐基础检索表", "推荐动态检索表", "默认查询词",
+        ],
+        [
+            {
+                "编号": "GR-001", "适用技能": "story-system", "分类": "题材路由", "层级": "知识补充",
+                "关键词": "仙侠", "意图与同义词": "", "适用题材": "仙侠", "大模型指令": "",
+                "核心摘要": "", "详细展开": "", "题材/流派": "仙侠", "canonical_genre": "仙侠",
+                "题材别名": "", "核心调性": "", "节奏策略": "", "毒点": "",
+                "推荐基础检索表": "", "推荐动态检索表": "场景写法", "默认查询词": "",
+            }
+        ],
+    )
+    _write_csv(
+        csv_dir / "场景写法.csv",
+        ["编号", "适用技能", "分类", "层级", "关键词", "适用题材", "核心摘要", "毒点"],
+        [
+            {
+                "编号": "SP-087", "适用技能": "write", "分类": "场景", "层级": "知识补充",
+                "关键词": "论道", "适用题材": "仙侠", "核心摘要": "文斗场面的张力来自观点击中修行根基。",
+                "毒点": "",
+            }
+        ],
+    )
+
+    contract = StorySystemEngine(csv_dir).build(
+        query="仙侠",
+        genre="仙侠",
+        chapter=2,
+        chapter_directive={"goal": "井边对话收集借贷情报"},
+    )
+
+    brief = contract["chapter_brief"]
+    assert brief["chapter_directive"]["goal"] == "井边对话收集借贷情报"
+    assert brief["override_allowed"]["chapter_focus"] == "井边对话收集借贷情报"
+
+
+def test_chapter_focus_never_taken_from_dynamic_context_summary_for_placeholder_query():
+    engine = StorySystemEngine(_make_local_tmp_path())
+    focus = engine._suggest_chapter_focus("{章纲目标}", {})
+
+    assert focus == ""
+
+
+def test_story_system_reference_matching_prefers_chapter_keywords_with_same_priority():
+    csv_dir = _make_local_tmp_path() / "csv"
+    csv_dir.mkdir()
+    _write_csv(
+        csv_dir / "题材与调性推理.csv",
+        [
+            "编号", "适用技能", "分类", "层级", "关键词", "意图与同义词", "适用题材",
+            "大模型指令", "核心摘要", "详细展开", "题材/流派", "canonical_genre", "题材别名", "核心调性",
+            "节奏策略", "毒点", "推荐基础检索表", "推荐动态检索表", "默认查询词",
+        ],
+        [
+            {
+                "编号": "GR-001", "适用技能": "story-system", "分类": "题材路由", "层级": "知识补充",
+                "关键词": "仙侠", "意图与同义词": "", "适用题材": "仙侠", "大模型指令": "",
+                "核心摘要": "", "详细展开": "", "题材/流派": "仙侠", "canonical_genre": "仙侠",
+                "题材别名": "", "核心调性": "", "节奏策略": "", "毒点": "",
+                "推荐基础检索表": "", "推荐动态检索表": "场景写法", "默认查询词": "宗门",
+            }
+        ],
+    )
+    _write_csv(
+        csv_dir / "场景写法.csv",
+        ["编号", "适用技能", "分类", "层级", "关键词", "适用题材", "适用场景", "核心摘要", "毒点"],
+        [
+            {
+                "编号": "SP-001", "适用技能": "write", "分类": "场景", "层级": "知识补充",
+                "关键词": "宗门|论道", "适用题材": "仙侠", "适用场景": "论道",
+                "核心摘要": "宗门论道要写观点交锋。", "毒点": "",
+            },
+            {
+                "编号": "FIN-001", "适用技能": "write", "分类": "场景", "层级": "知识补充",
+                "关键词": "借据|利息|复利|债", "适用题材": "仙侠", "适用场景": "借贷调查",
+                "核心摘要": "借贷场景要写清条款陷阱。", "毒点": "",
+            },
+        ],
+    )
+
+    contract = StorySystemEngine(csv_dir).build(
+        query="看穿借据条款的荒谬",
+        genre="仙侠",
+        chapter=1,
+        chapter_directive={"goal": "看穿借据条款的荒谬", "key_entities": ["借据", "利息", "复利"]},
+    )
+
+    selected = contract["chapter_brief"]["dynamic_context"]
+    assert selected[0]["编号"] == "FIN-001"
+
+
+def test_story_system_reference_matching_combines_priority_and_chapter_keywords():
+    csv_dir = _make_local_tmp_path() / "csv"
+    csv_dir.mkdir()
+    _write_csv(
+        csv_dir / "题材与调性推理.csv",
+        [
+            "编号", "适用技能", "分类", "层级", "关键词", "意图与同义词", "适用题材",
+            "大模型指令", "核心摘要", "详细展开", "题材/流派", "canonical_genre", "题材别名", "核心调性",
+            "节奏策略", "毒点", "推荐基础检索表", "推荐动态检索表", "默认查询词",
+        ],
+        [
+            {
+                "编号": "GR-001", "适用技能": "story-system", "分类": "题材路由", "层级": "知识补充",
+                "关键词": "仙侠", "意图与同义词": "", "适用题材": "仙侠", "大模型指令": "",
+                "核心摘要": "", "详细展开": "", "题材/流派": "仙侠", "canonical_genre": "仙侠",
+                "题材别名": "", "核心调性": "", "节奏策略": "", "毒点": "",
+                "推荐基础检索表": "", "推荐动态检索表": "桥段套路|场景写法", "默认查询词": "宗门",
+            }
+        ],
+    )
+    _write_csv(
+        csv_dir / "裁决规则.csv",
+        [
+            "编号", "适用技能", "分类", "层级", "关键词", "意图与同义词", "适用题材",
+            "大模型指令", "核心摘要", "详细展开", "题材", "风格优先级", "爽点优先级",
+            "节奏默认策略", "毒点权重", "冲突裁决", "contract注入层", "反模式",
+        ],
+        [
+            {
+                "编号": "RS-001", "适用技能": "story-system", "分类": "裁决", "层级": "推理层",
+                "关键词": "仙侠", "意图与同义词": "", "适用题材": "仙侠", "大模型指令": "",
+                "核心摘要": "", "详细展开": "", "题材": "仙侠", "风格优先级": "",
+                "爽点优先级": "", "节奏默认策略": "", "毒点权重": "",
+                "冲突裁决": "桥段套路 > 场景写法", "contract注入层": "CHAPTER_BRIEF", "反模式": "",
+            }
+        ],
+    )
+    _write_csv(
+        csv_dir / "桥段套路.csv",
+        ["编号", "适用技能", "分类", "层级", "关键词", "适用题材", "核心摘要", "桥段名称", "毒点"],
+        [
+            {
+                "编号": "TR-001", "适用技能": "write", "分类": "桥段", "层级": "知识补充",
+                "关键词": "宗门|论道", "适用题材": "仙侠", "核心摘要": "宗门论道冲突。",
+                "桥段名称": "论道", "毒点": "",
+            }
+        ],
+    )
+    _write_csv(
+        csv_dir / "场景写法.csv",
+        ["编号", "适用技能", "分类", "层级", "关键词", "适用题材", "适用场景", "核心摘要", "毒点"],
+        [
+            {
+                "编号": "FIN-001", "适用技能": "write", "分类": "场景", "层级": "知识补充",
+                "关键词": "借据|利息|复利|债", "适用题材": "仙侠", "适用场景": "借贷调查",
+                "核心摘要": "借贷场景要写清条款陷阱。", "毒点": "",
+            }
+        ],
+    )
+
+    contract = StorySystemEngine(csv_dir).build(
+        query="看穿借据条款的荒谬",
+        genre="仙侠",
+        chapter=1,
+        chapter_directive={"goal": "看穿借据条款的荒谬", "key_entities": ["借据", "利息", "复利"]},
+    )
+
+    selected = contract["chapter_brief"]["dynamic_context"]
+    assert [row["编号"] for row in selected[:2]] == ["FIN-001", "TR-001"]
+    trace_by_id = {row["id"]: row for row in contract["chapter_brief"]["source_trace"]}
+    assert trace_by_id["FIN-001"]["combined_rank_score"] > trace_by_id["TR-001"]["combined_rank_score"]

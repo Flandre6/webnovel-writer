@@ -11,7 +11,8 @@ from runtime_compat import enable_windows_utf8_stdio
 
 from data_modules.runtime_contract_builder import RuntimeContractBuilder
 from data_modules.story_contracts import persist_runtime_contracts, persist_story_seed
-from data_modules.story_system_engine import StorySystemEngine
+from data_modules.story_system_engine import StorySystemEngine, is_placeholder_query
+from chapter_outline_loader import load_chapter_execution_directive
 
 
 def _default_csv_dir() -> Path:
@@ -65,11 +66,22 @@ def main() -> None:
     args = parser.parse_args()
     project_root = _resolve_project_root(args.project_root)
     csv_dir = Path(args.csv_dir).expanduser().resolve() if args.csv_dir else _default_csv_dir()
+    if is_placeholder_query(args.query):
+        print(
+            "warning: story-system query appears to be a placeholder; parse the real chapter goal from the outline.",
+            file=sys.stderr,
+        )
+    chapter_directive = (
+        load_chapter_execution_directive(project_root, args.chapter)
+        if args.chapter
+        else {}
+    )
     engine = StorySystemEngine(csv_dir=csv_dir)
     contract = engine.build(
         query=args.query,
         genre=args.genre or None,
         chapter=args.chapter or None,
+        chapter_directive=chapter_directive,
     )
 
     if args.persist:

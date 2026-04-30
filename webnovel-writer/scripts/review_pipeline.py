@@ -25,7 +25,7 @@ def _ensure_scripts_path() -> None:
 
 _ensure_scripts_path()
 
-from data_modules.review_schema import parse_review_output
+from data_modules.review_schema import append_ai_flavor_anti_patterns, parse_review_output
 
 
 def _resolve_report_path(project_root: Path, report_file: str) -> Path:
@@ -149,12 +149,14 @@ def build_review_artifacts(
 ) -> Dict[str, Any]:
     raw = json.loads(review_results_path.read_text(encoding="utf-8"))
     result = parse_review_output(chapter=chapter, raw=raw)
+    anti_patterns_added = append_ai_flavor_anti_patterns(project_root, result)
     metrics = result.to_metrics_dict(report_file=report_file)
 
     return {
         "chapter": chapter,
         "review_result": result.to_dict(),
         "metrics": metrics,
+        "anti_patterns_added": anti_patterns_added,
     }
 
 
